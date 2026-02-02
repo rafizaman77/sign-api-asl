@@ -6,29 +6,29 @@
   <title>Sign Language Recognition</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; background: #e8e8e8; color: #000; }
-    h1 { font-size: 18px; margin: 0 0 12px 0; }
-    .wrap { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
-    .video-box { position: relative; width: 640px; max-width: 100%; background: #000; border-radius: 4px; overflow: hidden; aspect-ratio: 640/480; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 0; color: #000; overflow: auto; }
+    /* Repo layout: same positions as slr/main.py (background_image[170:650, 50:690] = video, [240:367, 731:1030] = result) */
+    .repo-layout { position: relative; min-width: 1030px; min-height: 708px; background: #2a2a2a url('/resources/background.png') no-repeat left top; background-size: 1030px 708px; }
+    .video-box { position: absolute; left: 50px; top: 170px; width: 640px; height: 480px; background: #000; overflow: hidden; }
     .video-box video, .video-box canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
     .video-box canvas { pointer-events: none; }
     .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); }
     .overlay.hidden { display: none; }
-    .panel { flex: 1; min-width: 200px; }
-    .letter-box { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 20px 16px; min-height: 100px; margin-bottom: 8px; font-size: 48px; font-weight: 700; line-height: 1.2; }
-    .text-box { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; min-height: 48px; margin-bottom: 8px; font-size: 14px; word-break: break-all; }
-    .error { background: #c00; color: #fff; padding: 6px; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
-    button { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 14px; }
+    .result-panel { position: absolute; left: 731px; top: 240px; width: 299px; min-height: 127px; background: #fff; border: 1px solid #ccc; padding: 8px; font-size: 14px; }
+    .letter-box { font-size: 48px; font-weight: 700; line-height: 1.2; margin-bottom: 8px; min-height: 60px; }
+    .text-box { min-height: 36px; font-size: 14px; word-break: break-all; margin-bottom: 8px; }
+    .btn-row { display: flex; gap: 6px; margin-top: 8px; }
+    .btn-row button { flex: 1; padding: 6px; font-size: 12px; background: #bbb; border: 1px solid #999; cursor: pointer; }
+    .error { position: absolute; top: 8px; left: 50px; right: 200px; background: #c00; color: #fff; padding: 6px; font-size: 12px; display: none; z-index: 10; }
+    .error.show { display: block; }
+    button.btn-start, button.btn-stop { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 14px; }
     .btn-start { background: #333; color: #fff; }
     .btn-stop { background: #666; color: #fff; margin-bottom: 8px; }
-    .btn-row { display: flex; gap: 6px; }
-    .btn-row button { flex: 1; padding: 8px; font-size: 12px; background: #bbb; border: 1px solid #999; }
   </style>
 </head>
 <body>
-  <h1>Sign Language Recognition</h1>
-  <div id="error" class="error" style="display: none;"></div>
-  <div class="wrap">
+  <div id="error" class="error"></div>
+  <div class="repo-layout">
     <div class="video-box">
       <video id="video" playsinline></video>
       <canvas id="canvas"></canvas>
@@ -36,7 +36,7 @@
         <button id="btnStart" class="btn-start">Start camera</button>
       </div>
     </div>
-    <div class="panel">
+    <div class="result-panel">
       <div class="letter-box" id="currentLetter">—</div>
       <button id="btnStop" class="btn-stop" style="display: none;">Stop camera</button>
       <div class="text-box" id="recognizedText"></div>
@@ -130,38 +130,39 @@
         }
       }
 
-      var COLORS = { outline: '#000', fill: '#fff', thumb: '#14FF39', index: '#FD12AB', middle: '#FF3131', ring: '#1F81FF', little: '#FF5B1F', palm: '#FFFF00' };
+      /* Same diagram as repo: slr/utils/landmarks.py (thumb green, index purple, middle red, ring blue, little orange, palm yellow, circles white/black) */
+      var COLORS = { outline: '#000000', fill: '#ffffff', thumb: '#14FF39', index: '#FD12AB', middle: '#FF3131', ring: '#1F51FF', little: '#FF5B1F', palm: '#FFFF00' };
       function drawLandmarks(ctx, pts) {
         if (!pts || pts.length !== 21) return;
-        function pt(i) { return pts[i]; }
-        function line(a, b, color) {
+        function p(i) { return pts[i]; }
+        function drawLine(a, b, color) {
           ctx.strokeStyle = COLORS.outline;
           ctx.lineWidth = 6;
           ctx.beginPath();
-          ctx.moveTo(pt(a)[0], pt(a)[1]);
-          ctx.lineTo(pt(b)[0], pt(b)[1]);
+          ctx.moveTo(p(a)[0], p(a)[1]);
+          ctx.lineTo(p(b)[0], p(b)[1]);
           ctx.stroke();
           ctx.strokeStyle = color;
           ctx.lineWidth = 2;
           ctx.stroke();
         }
-        function circle(i, r) {
+        function drawCircle(i, r) {
           ctx.fillStyle = COLORS.fill;
           ctx.strokeStyle = COLORS.outline;
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.arc(pt(i)[0], pt(i)[1], r, 0, Math.PI * 2);
+          ctx.arc(p(i)[0], p(i)[1], r, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
         }
-        line(2,3,COLORS.thumb); line(3,4,COLORS.thumb);
-        line(5,6,COLORS.index); line(6,7,COLORS.index); line(7,8,COLORS.index);
-        line(9,10,COLORS.middle); line(10,11,COLORS.middle); line(11,12,COLORS.middle);
-        line(13,14,COLORS.ring); line(14,15,COLORS.ring); line(15,16,COLORS.ring);
-        line(17,18,COLORS.little); line(18,19,COLORS.little); line(19,20,COLORS.little);
-        line(0,1,COLORS.palm); line(1,2,COLORS.palm); line(2,5,COLORS.palm);
-        line(5,9,COLORS.palm); line(9,13,COLORS.palm); line(13,17,COLORS.palm); line(17,0,COLORS.palm);
-        for (var i = 0; i < 21; i++) circle(i, [4,8,12,16,20].indexOf(i) >= 0 ? 8 : 5);
+        drawLine(2, 3, COLORS.thumb); drawLine(3, 4, COLORS.thumb);
+        drawLine(5, 6, COLORS.index); drawLine(6, 7, COLORS.index); drawLine(7, 8, COLORS.index);
+        drawLine(9, 10, COLORS.middle); drawLine(10, 11, COLORS.middle); drawLine(11, 12, COLORS.middle);
+        drawLine(13, 14, COLORS.ring); drawLine(14, 15, COLORS.ring); drawLine(15, 16, COLORS.ring);
+        drawLine(17, 18, COLORS.little); drawLine(18, 19, COLORS.little); drawLine(19, 20, COLORS.little);
+        drawLine(0, 1, COLORS.palm); drawLine(1, 2, COLORS.palm); drawLine(2, 5, COLORS.palm);
+        drawLine(5, 9, COLORS.palm); drawLine(9, 13, COLORS.palm); drawLine(13, 17, COLORS.palm); drawLine(17, 0, COLORS.palm);
+        for (var i = 0; i < 21; i++) drawCircle(i, [4, 8, 12, 16, 20].indexOf(i) >= 0 ? 8 : 5);
       }
 
       function calcBoundingRect(pts) {

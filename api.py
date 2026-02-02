@@ -165,6 +165,13 @@ def app_page():
     return send_from_directory(static_dir, "app.html", mimetype="text/html")
 
 
+@app.route("/resources/<path:filename>", methods=["GET"])
+def serve_resource(filename):
+    """Serve repo assets (e.g. background.png) so the app can match the GitHub layout."""
+    resources_dir = os.path.join(BASE_DIR, "resources")
+    return send_from_directory(resources_dir, filename)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
