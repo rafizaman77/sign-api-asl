@@ -33,6 +33,20 @@ def add_cors(resp):
     return resp
 
 
+@app.route("/", methods=["GET", "HEAD"])
+def index():
+    return jsonify(
+        {
+            "service": "sign-api-asl",
+            "status": "ok",
+            "endpoints": {
+                "health": "/health",
+                "classify": {"path": "/classify-sign", "method": "POST"},
+            },
+        }
+    )
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "slr", "model", "slr_model.tflite")
 LABEL_PATH = os.path.join(BASE_DIR, "slr", "model", "label.csv")
