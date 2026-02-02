@@ -33,7 +33,7 @@
       <video id="video" playsinline></video>
       <canvas id="canvas"></canvas>
       <div id="overlay" class="overlay">
-        <button id="btnStart" class="btn-start">Start camera</button>
+        <button id="btnStart" class="btn-start" disabled>Start camera</button>
       </div>
     </div>
     <div class="result-panel">
@@ -213,7 +213,12 @@
       }
 
       function stopCamera() {
-        if (camera) { camera.stop(); camera = null; }
+        if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(function (t) { t.stop(); });
+          video.srcObject = null;
+        }
+        if (camera) { try { camera.stop(); } catch (_) {} camera = null; }
         if (hands) { hands.close(); hands = null; }
         overlay.classList.remove('hidden');
         btnStart.style.display = 'block';
@@ -222,6 +227,7 @@
         holdStart = null;
       }
 
+      var rafId = null;
       function startCamera() {
         showError('');
         checkHealth().then(function (data) {
@@ -229,8 +235,8 @@
             showError('Model not loaded. Check slr/model/');
             return;
           }
-          if (!window.Hands || !window.Camera) {
-            showError('MediaPipe not loaded');
+          if (!window.Hands) {
+            showError('MediaPipe Hands not loaded');
             return;
           }
           hands = new window.Hands({
@@ -238,22 +244,49 @@
           });
           hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
           hands.onResults(onResults);
-          camera = new window.Camera(video, {
-            onFrame: function () {
-              if (video && hands) hands.send({ image: video });
-            },
-            width: 640,
-            height: 480
-          });
-          camera.start().then(function () {
-            overlay.classList.add('hidden');
-            btnStart.style.display = 'none';
-            btnStop.style.display = 'block';
-          }).catch(function (err) {
-            showError('Camera: ' + (err.message || 'denied'));
-          });
+
+          function startStream() {
+            var useCameraUtil = typeof window.Camera === 'function';
+            if (useCameraUtil) {
+              camera = new window.Camera(video, {
+                onFrame: function () {
+                  if (video && hands) hands.send({ image: video });
+                },
+                width: 640,
+                height: 480
+              });
+              camera.start().then(function () {
+                overlay.classList.add('hidden');
+                btnStart.style.display = 'none';
+                btnStop.style.display = 'block';
+              }).catch(function (err) {
+                showError('Camera: ' + (err.message || 'denied'));
+              });
+            } else {
+              navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false })
+                .then(function (stream) {
+                  video.srcObject = stream;
+                  video.play().then(function () {
+                    overlay.classList.add('hidden');
+                    btnStart.style.display = 'none';
+                    btnStop.style.display = 'block';
+                    function frameLoop() {
+                      if (video.readyState >= 2 && hands) hands.send({ image: video });
+                      rafId = requestAnimationFrame(frameLoop);
+                    }
+                    frameLoop();
+                  }).catch(function (err) {
+                    showError('Camera: ' + (err.message || 'denied'));
+                  });
+                })
+                .catch(function (err) {
+                  showError('Camera: ' + (err.message || 'Allow camera access and try again.'));
+                });
+            }
+          }
+          startStream();
         }).catch(function (e) {
-          showError('API not reachable. Run: python api.py');
+          showError('API not reachable. Ensure the API is running (e.g. sign-api-asl.onrender.com).');
         });
       }
 
@@ -275,9 +308,9 @@
         });
       }
       loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@' + MP_HANDS_VER + '/hands.js')
-        .then(function () { return loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@' + MP_CAM_VER + '/camera_utils.js'); })
+        .then(function () { return loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@' + MP_CAM_VER + '/camera_utils.js').catch(function () { return null; }); })
         .then(function () { btnStart.disabled = false; })
-        .catch(function () { showError('Failed to load MediaPipe'); });
+        .catch(function () { showError('Failed to load MediaPipe'); btnStart.disabled = false; });
     })();
   </script>
 </body>
