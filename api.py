@@ -60,9 +60,16 @@ LABELS = []
 
 
 def pre_process_landmark(landmark_list):
-    """Match slr.utils.pre_process.pre_process_landmark: wrist-relative, flatten 42, normalize."""
+    """
+    Same pipeline as GitHub repo (keypoint.csv): wrist-relative, flatten to 1D, normalize -1 to 1.
+    Matches slr/utils/pre_process.py and the data written by:
+      temp_landmark_list = list(itertools.chain.from_iterable(temp_landmark_list))
+      max_value = max(list(map(abs, temp_landmark_list)))
+      landmark_list = list(map(lambda n: n / max_value, temp_landmark_list))
+    """
     temp = copy.deepcopy(landmark_list)
 
+    # Wrist (index 0) as root
     base_x, base_y = 0.0, 0.0
     for idx, pt in enumerate(temp):
         if idx == 0:
@@ -70,11 +77,12 @@ def pre_process_landmark(landmark_list):
         pt[0] = float(pt[0]) - base_x
         pt[1] = float(pt[1]) - base_y
 
+    # Flatten to one-dimensional list (42 values: 21 landmarks * 2)
     flat = list(itertools.chain.from_iterable(temp))
+    # Normalization (-1 to 1)
     max_val = max(list(map(abs, flat))) if flat else 1.0
     if max_val < 1e-9:
         max_val = 1.0
-
     return [v / max_val for v in flat]
 
 
@@ -174,4 +182,10 @@ def serve_resource(filename):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    print("")
+    print("  Sign Language Recognition API")
+    print("  ------------------------------")
+    print(f"  Open in browser: http://127.0.0.1:{port}/app")
+    print("  (Allow camera when prompted)")
+    print("")
     app.run(host="0.0.0.0", port=port, debug=False)

@@ -15,8 +15,8 @@
     .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); }
     .overlay.hidden { display: none; }
     .result-panel { position: absolute; left: 731px; top: 240px; width: 299px; min-height: 127px; background: #fff; border: 1px solid #ccc; padding: 8px; font-size: 14px; }
-    .letter-box { font-size: 48px; font-weight: 700; line-height: 1.2; margin-bottom: 8px; min-height: 60px; }
-    .text-box { min-height: 36px; font-size: 14px; word-break: break-all; margin-bottom: 8px; }
+    .letter-box { font-size: 48px; font-weight: 700; line-height: 1.2; margin-bottom: 8px; min-height: 60px; border: none; outline: none; box-shadow: none; }
+    .text-box { min-height: 36px; font-size: 14px; word-break: break-all; margin-bottom: 8px; border: none; background: transparent; }
     .btn-row { display: flex; gap: 6px; margin-top: 8px; }
     .btn-row button { flex: 1; padding: 6px; font-size: 12px; background: #bbb; border: 1px solid #999; cursor: pointer; }
     .error { position: absolute; top: 8px; left: 50px; right: 200px; background: #c00; color: #fff; padding: 6px; font-size: 12px; display: none; z-index: 10; }
@@ -30,8 +30,9 @@
   <div id="error" class="error"></div>
   <div class="repo-layout">
     <div class="video-box">
-      <video id="video" playsinline></video>
+      <video id="video" playsinline muted></video>
       <canvas id="canvas"></canvas>
+      <canvas id="sourceCanvas" style="display:none;position:absolute;left:0;top:0;width:640px;height:480px;"></canvas>
       <div id="overlay" class="overlay">
         <button id="btnStart" class="btn-start" disabled>Start camera</button>
       </div>
@@ -57,7 +58,11 @@
 
       var video = document.getElementById('video');
       var canvas = document.getElementById('canvas');
+      var sourceCanvas = document.getElementById('sourceCanvas');
       var ctx = canvas.getContext('2d');
+      var sourceCtx = sourceCanvas.getContext('2d');
+      var FRAME_W = 640;
+      var FRAME_H = 480;
       var overlay = document.getElementById('overlay');
       var btnStart = document.getElementById('btnStart');
       var btnStop = document.getElementById('btnStop');
@@ -85,6 +90,7 @@
         return fetch('/health', { method: 'GET' }).then(function (r) { return r.json(); });
       }
 
+      /* Send 21 hand landmarks to API; API flattens to 1D and normalizes -1 to 1 (same as keypoint.csv pipeline). */
       function callApi(landmarkPoints) {
         if (apiInFlight || !landmarkPoints || landmarkPoints.length !== 21) return;
         apiInFlight = true;
@@ -177,15 +183,26 @@
       }
 
       function onResults(results) {
-        var w = video.videoWidth, h = video.videoHeight;
+        var w = (results.image && results.image.width) ? results.image.width : (video.videoWidth || FRAME_W);
+        var h = (results.image && results.image.height) ? results.image.height : (video.videoHeight || FRAME_H);
+        if (w <= 0 || h <= 0) { w = FRAME_W; h = FRAME_H; }
         canvas.width = w;
         canvas.height = h;
         ctx.save();
         ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(results.image, 0, 0, w, h);
+        if (results.image && results.image.width > 0 && results.image.height > 0) {
+          ctx.drawImage(results.image, 0, 0, w, h);
+        } else if (video.readyState >= 2 && video.videoWidth > 0) {
+          ctx.save();
+          ctx.scale(-1, 1);
+          ctx.translate(-w, 0);
+          ctx.drawImage(video, 0, 0, w, h);
+          ctx.restore();
+        }
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
           var landmarks = results.multiHandLandmarks[0];
           var handedness = (results.multiHandedness && results.multiHandedness[0] && results.multiHandedness[0].classification && results.multiHandedness[0].classification[0]) ? results.multiHandedness[0].classification[0].label : 'Right';
+          /* 21 landmarks [x,y] in pixel space – same format as repo calc_landmark_list; API flattens and normalizes like keypoint.csv */
           var landmarkPoints = landmarks.map(function(l) {
             return [ Math.min(Math.round(l.x * w), w - 1), Math.min(Math.round(l.y * h), h - 1) ];
           });
@@ -242,49 +259,41 @@
           hands = new window.Hands({
             locateFile: function (f) { return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@' + MP_HANDS_VER + '/' + f; }
           });
-          hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+          hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
           hands.onResults(onResults);
 
-          function startStream() {
-            var useCameraUtil = typeof window.Camera === 'function';
-            if (useCameraUtil) {
-              camera = new window.Camera(video, {
-                onFrame: function () {
-                  if (video && hands) hands.send({ image: video });
-                },
-                width: 640,
-                height: 480
-              });
-              camera.start().then(function () {
+          sourceCanvas.width = FRAME_W;
+          sourceCanvas.height = FRAME_H;
+
+          navigator.mediaDevices.getUserMedia({ video: { width: { ideal: FRAME_W }, height: { ideal: FRAME_H } }, audio: false })
+            .then(function (stream) {
+              video.srcObject = stream;
+              video.muted = true;
+              video.playsInline = true;
+              video.play().then(function () {
                 overlay.classList.add('hidden');
                 btnStart.style.display = 'none';
                 btnStop.style.display = 'block';
+                function frameLoop() {
+                  if (!hands) { rafId = requestAnimationFrame(frameLoop); return; }
+                  if (video.readyState >= 2 && video.videoWidth > 0) {
+                    sourceCtx.save();
+                    sourceCtx.scale(-1, 1);
+                    sourceCtx.translate(-FRAME_W, 0);
+                    sourceCtx.drawImage(video, 0, 0, FRAME_W, FRAME_H);
+                    sourceCtx.restore();
+                    hands.send({ image: sourceCanvas });
+                  }
+                  rafId = requestAnimationFrame(frameLoop);
+                }
+                frameLoop();
               }).catch(function (err) {
                 showError('Camera: ' + (err.message || 'denied'));
               });
-            } else {
-              navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false })
-                .then(function (stream) {
-                  video.srcObject = stream;
-                  video.play().then(function () {
-                    overlay.classList.add('hidden');
-                    btnStart.style.display = 'none';
-                    btnStop.style.display = 'block';
-                    function frameLoop() {
-                      if (video.readyState >= 2 && hands) hands.send({ image: video });
-                      rafId = requestAnimationFrame(frameLoop);
-                    }
-                    frameLoop();
-                  }).catch(function (err) {
-                    showError('Camera: ' + (err.message || 'denied'));
-                  });
-                })
-                .catch(function (err) {
-                  showError('Camera: ' + (err.message || 'Allow camera access and try again.'));
-                });
-            }
-          }
-          startStream();
+            })
+            .catch(function (err) {
+              showError('Camera: ' + (err.message || 'Allow camera access and try again.'));
+            });
         }).catch(function (e) {
           showError('API not reachable. Ensure the API is running (e.g. sign-api-asl.onrender.com).');
         });

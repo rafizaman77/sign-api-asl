@@ -36,51 +36,77 @@ The Sign Language Recognition System consists of several components:
 
 <br><br>
 
+## One codebase: local machine or hosted (Render)
+The same repo runs **on your machine** (clone + install + run API) or **on Render** (hosted). The API is the universal entry point: it serves the web app and the 24k model.
+
+- **Hosted (no install):** [https://sign-api-asl.onrender.com/app](https://sign-api-asl.onrender.com/app) — open in browser, allow camera, use it.
+- **Local machine:** Clone, install, run `python api.py`, then open **http://localhost:5000/app** — your machine is the recognition server (same app, same model).
+
+
+<br><br>
+
 ## Installation 
 To set up the Sign Language Recognition System on your local machine, follow these steps:
 
-1. Clone the repository to your local machine.
+1. Clone the repository.
    
-    ``` bash
+    ```bash
     git clone https://github.com/the-sam963/Sign-language-Recognition.git
+    cd Sign-language-Recognition
     ```
 
 2. Install the required packages using the requirements.txt file.
 
-    ``` bash
+    ```bash
     # Windows
-        cd Sign-language-Recognition
-        virtualenv env
-        .\env\Scripts\activate.ps1
-        pip install -r requirements.txt
+    virtualenv env
+    .\env\Scripts\activate.ps1
+    pip install -r requirements.txt
 
-    # Linux/ macOS
-        cd Sign-language-Recognition
-        virtualenv env
-        source env/bin/activate
-        pip3 install -r requirements.txt
+    # Linux / macOS
+    virtualenv env
+    source env/bin/activate
+    pip3 install -r requirements.txt
     ```
-You are now ready to use the Sign Language Recognition System on your local machine.
+
+You are now ready to run the API locally (see Usage below).
 
 
 <br><br>
 
 ## Usage 
-To use the Sign Language Recognition System, follow these steps:
 
-1. Ensure that the required dependencies and resources are properly installed and set up.
+### Run the API (recommended — universal local or hosted)
+After installation, start the API. Your machine becomes the sign language recognition server (same as the hosted Render app).
 
-2. Train the model (if needed)
-    ``` bash
-    python train.py
-    ```
-3. Run the main application
-    ``` bash
-    python app.py
-    ```
-4. The application will open a video stream and start recognizing sign language gestures in real-time.
+**Option A — Run script (easiest)**  
+- **Windows:** Double-click `run_api.bat` or in PowerShell run `.\run_api.ps1`  
+- **Linux / macOS:** `chmod +x run_api.sh` then `./run_api.sh`  
 
-5. Interact with the system by making sign language gestures within the camera's view. The recognized gestures will be displayed on the screen
+**Option B — Manual**  
+```bash
+# Activate your venv first, then:
+python api.py
+```
+
+Then open in your browser: **http://127.0.0.1:5000/app** (or http://localhost:5000/app)
+
+- Allow camera when prompted. You should see hand landmarks and real-time letter recognition (24k model).
+- `GET /health` — model status  
+- `POST /classify-sign` — send 21 hand landmarks, get letter + confidence  
+
+To use the **hosted** version instead (no local run): open [https://sign-api-asl.onrender.com/app](https://sign-api-asl.onrender.com/app).
+
+### Train the model (if you add new data)
+```bash
+python train.py
+```
+
+### Run the desktop app (optional)
+```bash
+python app.py
+```
+Opens the OpenCV desktop application (video stream, data collection, prediction).
 
 
 Here is a demo of the Sign Language Recognition System in action:
