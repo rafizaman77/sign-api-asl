@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign Language Recognition</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; background: #e8e8e8; color: #000; }
+    h1 { font-size: 18px; margin: 0 0 12px 0; }
+    .wrap { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+    .video-box { position: relative; width: 640px; max-width: 100%; background: #000; border-radius: 4px; overflow: hidden; aspect-ratio: 640/480; }
+    .video-box video, .video-box canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    .video-box canvas { pointer-events: none; }
+    .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); }
+    .overlay.hidden { display: none; }
+    .panel { flex: 1; min-width: 200px; }
+    .letter-box { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 20px 16px; min-height: 100px; margin-bottom: 8px; font-size: 48px; font-weight: 700; line-height: 1.2; }
+    .text-box { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; min-height: 48px; margin-bottom: 8px; font-size: 14px; word-break: break-all; }
+    .error { background: #c00; color: #fff; padding: 6px; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
+    button { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 14px; }
+    .btn-start { background: #333; color: #fff; }
+    .btn-stop { background: #666; color: #fff; margin-bottom: 8px; }
+    .btn-row { display: flex; gap: 6px; }
+    .btn-row button { flex: 1; padding: 8px; font-size: 12px; background: #bbb; border: 1px solid #999; }
+  </style>
+</head>
+<body>
+  <h1>Sign Language Recognition</h1>
+  <div id="error" class="error" style="display: none;"></div>
+  <div class="wrap">
+    <div class="video-box">
+      <video id="video" playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div id="overlay" class="overlay">
+        <button id="btnStart" class="btn-start">Start camera</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="letter-box" id="currentLetter">—</div>
+      <button id="btnStop" class="btn-stop" style="display: none;">Stop camera</button>
+      <div class="text-box" id="recognizedText"></div>
+      <div class="btn-row">
+        <button type="button" id="btnSpace">Space</button>
+        <button type="button" id="btnBackspace">Backspace</button>
+        <button type="button" id="btnClear">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var MP_HANDS_VER = '0.4.1675469240';
+      var MP_CAM_VER = '0.3.1640029074';
+      var API_TIMEOUT = 15000;
+      var HOLD_SEC = 0.6;
+
+      var video = document.getElementById('video');
+      var canvas = document.getElementById('canvas');
+      var ctx = canvas.getContext('2d');
+      var overlay = document.getElementById('overlay');
+      var btnStart = document.getElementById('btnStart');
+      var btnStop = document.getElementById('btnStop');
+      var currentLetterEl = document.getElementById('currentLetter');
+      var recognizedTextEl = document.getElementById('recognizedText');
+      var errorEl = document.getElementById('error');
+
+      var hands = null;
+      var camera = null;
+      var recognizedText = '';
+      var lastLetter = '';
+      var holdStart = null;
+      var apiInFlight = false;
+
+      function showError(msg) {
+        errorEl.textContent = msg || '';
+        errorEl.style.display = msg ? 'block' : 'none';
+      }
+
+      function setLetter(letter, conf) {
+        currentLetterEl.textContent = conf > 0 ? letter + ' (' + Math.round(conf * 100) + '%)' : (letter || '—');
+      }
+
+      function checkHealth() {
+        return fetch('/health', { method: 'GET' }).then(function (r) { return r.json(); });
+      }
+
+      function callApi(landmarkPoints) {
+        if (apiInFlight || !landmarkPoints || landmarkPoints.length !== 21) return;
+        apiInFlight = true;
+        var ctrl = new AbortController();
+        var tid = setTimeout(function () { ctrl.abort(); }, API_TIMEOUT);
+        fetch('/classify-sign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ landmarks: landmarkPoints }),
+          signal: ctrl.signal
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            clearTimeout(tid);
+            var letter = (data.letter || '').trim();
+            var conf = typeof data.confidence === 'number' ? data.confidence : 0;
+            if (letter) applyResult(letter, conf);
+            if (data.error) showError(data.error); else showError('');
+          })
+          .catch(function (e) {
+            clearTimeout(tid);
+            showError(e.name === 'AbortError' ? 'API timeout' : (e.message || 'API error'));
+          })
+          .then(function () { apiInFlight = false; });
+      }
+
+      function applyResult(letter, conf) {
+        setLetter(letter, conf);
+        var now = Date.now();
+        var start = holdStart || now;
+        if (letter === lastLetter) {
+          if (!holdStart) holdStart = start;
+          if ((now - start) / 1000 >= HOLD_SEC) {
+            if (recognizedText.slice(-1) !== letter) {
+              recognizedText += letter;
+              recognizedTextEl.textContent = recognizedText;
+            }
+            holdStart = null;
+          }
+        } else {
+          lastLetter = letter;
+          holdStart = null;
+        }
+      }
+
+      var COLORS = { outline: '#000', fill: '#fff', thumb: '#14FF39', index: '#FD12AB', middle: '#FF3131', ring: '#1F81FF', little: '#FF5B1F', palm: '#FFFF00' };
+      function drawLandmarks(ctx, pts) {
+        if (!pts || pts.length !== 21) return;
+        function pt(i) { return pts[i]; }
+        function line(a, b, color) {
+          ctx.strokeStyle = COLORS.outline;
+          ctx.lineWidth = 6;
+          ctx.beginPath();
+          ctx.moveTo(pt(a)[0], pt(a)[1]);
+          ctx.lineTo(pt(b)[0], pt(b)[1]);
+          ctx.stroke();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        function circle(i, r) {
+          ctx.fillStyle = COLORS.fill;
+          ctx.strokeStyle = COLORS.outline;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(pt(i)[0], pt(i)[1], r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        line(2,3,COLORS.thumb); line(3,4,COLORS.thumb);
+        line(5,6,COLORS.index); line(6,7,COLORS.index); line(7,8,COLORS.index);
+        line(9,10,COLORS.middle); line(10,11,COLORS.middle); line(11,12,COLORS.middle);
+        line(13,14,COLORS.ring); line(14,15,COLORS.ring); line(15,16,COLORS.ring);
+        line(17,18,COLORS.little); line(18,19,COLORS.little); line(19,20,COLORS.little);
+        line(0,1,COLORS.palm); line(1,2,COLORS.palm); line(2,5,COLORS.palm);
+        line(5,9,COLORS.palm); line(9,13,COLORS.palm); line(13,17,COLORS.palm); line(17,0,COLORS.palm);
+        for (var i = 0; i < 21; i++) circle(i, [4,8,12,16,20].indexOf(i) >= 0 ? 8 : 5);
+      }
+
+      function calcBoundingRect(pts) {
+        if (!pts || pts.length === 0) return [0,0,0,0];
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        pts.forEach(function(p) {
+          minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]);
+          maxX = Math.max(maxX, p[0]); maxY = Math.max(maxY, p[1]);
+        });
+        var pad = 6;
+        return [minX - pad, minY - pad, maxX + pad, maxY + pad];
+      }
+
+      function onResults(results) {
+        var w = video.videoWidth, h = video.videoHeight;
+        canvas.width = w;
+        canvas.height = h;
+        ctx.save();
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(results.image, 0, 0, w, h);
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          var landmarks = results.multiHandLandmarks[0];
+          var handedness = (results.multiHandedness && results.multiHandedness[0] && results.multiHandedness[0].classification && results.multiHandedness[0].classification[0]) ? results.multiHandedness[0].classification[0].label : 'Right';
+          var landmarkPoints = landmarks.map(function(l) {
+            return [ Math.min(Math.round(l.x * w), w - 1), Math.min(Math.round(l.y * h), h - 1) ];
+          });
+          var brect = calcBoundingRect(landmarkPoints);
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(brect[0], brect[1], brect[2] - brect[0], brect[3] - brect[1]);
+          ctx.fillStyle = '#000';
+          ctx.fillRect(brect[0], brect[1] - 22, brect[2] - brect[0], 22);
+          ctx.fillStyle = '#fff';
+          ctx.font = '600 14px system-ui, sans-serif';
+          ctx.fillText(handedness, brect[0] + 5, brect[1] - 6);
+          drawLandmarks(ctx, landmarkPoints);
+          if (handedness === 'Right') {
+            callApi(landmarkPoints);
+          } else {
+            setLetter('Use Right Hand', 0);
+            holdStart = null;
+          }
+        } else {
+          setLetter('', 0);
+          holdStart = null;
+        }
+        ctx.restore();
+      }
+
+      function stopCamera() {
+        if (camera) { camera.stop(); camera = null; }
+        if (hands) { hands.close(); hands = null; }
+        overlay.classList.remove('hidden');
+        btnStart.style.display = 'block';
+        btnStop.style.display = 'none';
+        setLetter('', 0);
+        holdStart = null;
+      }
+
+      function startCamera() {
+        showError('');
+        checkHealth().then(function (data) {
+          if (!data.model_loaded) {
+            showError('Model not loaded. Check slr/model/');
+            return;
+          }
+          if (!window.Hands || !window.Camera) {
+            showError('MediaPipe not loaded');
+            return;
+          }
+          hands = new window.Hands({
+            locateFile: function (f) { return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@' + MP_HANDS_VER + '/' + f; }
+          });
+          hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+          hands.onResults(onResults);
+          camera = new window.Camera(video, {
+            onFrame: function () {
+              if (video && hands) hands.send({ image: video });
+            },
+            width: 640,
+            height: 480
+          });
+          camera.start().then(function () {
+            overlay.classList.add('hidden');
+            btnStart.style.display = 'none';
+            btnStop.style.display = 'block';
+          }).catch(function (err) {
+            showError('Camera: ' + (err.message || 'denied'));
+          });
+        }).catch(function (e) {
+          showError('API not reachable. Run: python api.py');
+        });
+      }
+
+      btnStart.addEventListener('click', startCamera);
+      btnStop.addEventListener('click', stopCamera);
+      document.getElementById('btnSpace').addEventListener('click', function () { recognizedText += ' '; recognizedTextEl.textContent = recognizedText; });
+      document.getElementById('btnBackspace').addEventListener('click', function () { recognizedText = recognizedText.slice(0, -1); recognizedTextEl.textContent = recognizedText; });
+      document.getElementById('btnClear').addEventListener('click', function () { recognizedText = ''; recognizedTextEl.textContent = recognizedText; });
+
+      window.Module = window.Module || {};
+      try { if (!('arguments' in window.Module)) Object.defineProperty(window.Module, 'arguments', { value: [], configurable: true }); } catch (_) {}
+      function loadScript(src) {
+        return new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = src;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.body.appendChild(s);
+        });
+      }
+      loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@' + MP_HANDS_VER + '/hands.js')
+        .then(function () { return loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@' + MP_CAM_VER + '/camera_utils.js'); })
+        .then(function () { btnStart.disabled = false; })
+        .catch(function () { showError('Failed to load MediaPipe'); });
+    })();
+  </script>
+</body>
+</html>
